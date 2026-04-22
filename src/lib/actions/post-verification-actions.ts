@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { blogs, postVerifications } from "@/lib/db/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth/helpers";
-import { fetchRecentPosts } from "@/lib/services/wp-client";
+import { fetchRecentPosts } from "@/lib/services/platform-client";
 
 export async function getPostVerifications(params?: {
   blogId?: string;
@@ -46,14 +46,12 @@ export async function verifyBlogPosts(blogId: string) {
   await requireAdmin();
 
   const [blog] = await db.select().from(blogs).where(eq(blogs.id, blogId)).limit(1);
-  if (!blog || !blog.wpUrl || !blog.wpUsername || !blog.wpAppPassword) {
-    throw new Error("Blog not found or missing credentials");
-  }
+  if (!blog) throw new Error("Blog not found");
 
-  const posts = await fetchRecentPosts(blog.wpUrl, blog.wpUsername, blog.wpAppPassword, 5);
+  const posts = await fetchRecentPosts(blog, 5);
 
   const latestPost = posts[0];
-  const latestPostDate = latestPost?.date ? new Date(latestPost.date) : null;
+  const latestPostDate = latestPost?.publishedAt ?? null;
   const daysSinceLastPost = latestPostDate
     ? Math.ceil((Date.now() - latestPostDate.getTime()) / (1000 * 60 * 60 * 24))
     : null;
@@ -69,8 +67,8 @@ export async function verifyBlogPosts(blogId: string) {
     clientId: blog.clientId,
     checkType: "manual",
     latestPostDate,
-    latestPostTitle: latestPost?.title?.rendered || null,
-    latestPostUrl: latestPost?.link || null,
+    latestPostTitle: latestPost?.title || null,
+    latestPostUrl: latestPost?.url || null,
     postsInPeriod: posts.length,
     expectedPosts: blog.postingFrequencyDays ? Math.ceil(7 / blog.postingFrequencyDays) : 0,
     onSchedule,
@@ -78,10 +76,9 @@ export async function verifyBlogPosts(blogId: string) {
     alertTriggered,
   }).returning();
 
-  // Update blog record
   await db.update(blogs).set({
     lastPostVerifiedAt: new Date(),
-    lastPostTitle: latestPost?.title?.rendered || blog.lastPostTitle,
+    lastPostTitle: latestPost?.title || blog.lastPostTitle,
     updatedAt: new Date(),
   }).where(eq(blogs.id, blogId));
 
@@ -96,12 +93,15 @@ export async function runPostVerificationCron() {
   let alerts = 0;
 
   for (const blog of activeBlogs) {
-    if (!blog.wpUrl || !blog.wpUsername || !blog.wpAppPassword) continue;
+    const hasWp = blog.wpUrl && blog.wpUsername && blog.wpAppPassword;
+    const hasShopify = blog.shopifyStoreUrl && blog.shopifyAdminApiToken;
+    if (blog.platform === "wordpress" && !hasWp) continue;
+    if (blog.platform === "shopify" && !hasShopify) continue;
 
     try {
-      const posts = await fetchRecentPosts(blog.wpUrl, blog.wpUsername, blog.wpAppPassword, 5);
+      const posts = await fetchRecentPosts(blog, 5);
       const latestPost = posts[0];
-      const latestPostDate = latestPost?.date ? new Date(latestPost.date) : null;
+      const latestPostDate = latestPost?.publishedAt ?? null;
       const daysSinceLastPost = latestPostDate
         ? Math.ceil((Date.now() - latestPostDate.getTime()) / (1000 * 60 * 60 * 24))
         : null;
@@ -118,8 +118,8 @@ export async function runPostVerificationCron() {
         clientId: blog.clientId,
         checkType: "scheduled",
         latestPostDate,
-        latestPostTitle: latestPost?.title?.rendered || null,
-        latestPostUrl: latestPost?.link || null,
+        latestPostTitle: latestPost?.title || null,
+        latestPostUrl: latestPost?.url || null,
         postsInPeriod: posts.length,
         expectedPosts: blog.postingFrequencyDays ? Math.ceil(7 / blog.postingFrequencyDays) : 0,
         onSchedule,
@@ -129,7 +129,7 @@ export async function runPostVerificationCron() {
 
       await db.update(blogs).set({
         lastPostVerifiedAt: new Date(),
-        lastPostTitle: latestPost?.title?.rendered || blog.lastPostTitle,
+        lastPostTitle: latestPost?.title || blog.lastPostTitle,
       }).where(eq(blogs.id, blog.id));
 
       verified++;

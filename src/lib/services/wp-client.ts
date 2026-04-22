@@ -1,5 +1,10 @@
 import axios, { type AxiosInstance, type AxiosError } from "axios";
-import type { WpConnectionResult, SeoPlugin } from "@/lib/types";
+import type {
+  WpConnectionResult,
+  SeoPlugin,
+  PublishPostInput,
+  PublishPostResult,
+} from "@/lib/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -168,6 +173,35 @@ export async function testConnection(
       success: false,
       message: formatError(error),
     };
+  }
+}
+
+/**
+ * Create a new WordPress post.
+ */
+export async function createPost(
+  wpUrl: string,
+  username: string,
+  appPassword: string,
+  input: PublishPostInput,
+): Promise<PublishPostResult> {
+  try {
+    const client = createClient(wpUrl, username, appPassword);
+    const wpStatus = (input.status ?? "publish") === "publish" ? "publish" : "draft";
+    const res = await client.post<WpPost>("/wp-json/wp/v2/posts", {
+      title: input.title,
+      content: input.content,
+      excerpt: input.excerpt,
+      status: wpStatus,
+    });
+    return {
+      success: true,
+      message: `Post "${res.data.title.rendered}" ${wpStatus === "publish" ? "published" : "saved as draft"}`,
+      postId: res.data.id,
+      postUrl: res.data.link,
+    };
+  } catch (error) {
+    return { success: false, message: formatError(error) };
   }
 }
 

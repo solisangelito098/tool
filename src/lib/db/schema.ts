@@ -23,6 +23,7 @@ export const billingTypeEnum = pgEnum("billing_type", ["one_time", "monthly", "y
 export const billingStatusEnum = pgEnum("billing_status", ["active", "overdue", "paused", "cancelled"]);
 export const blogStatusEnum = pgEnum("blog_status", ["active", "paused", "setup", "decommissioned"]);
 export const seoPluginEnum = pgEnum("seo_plugin", ["yoast", "rankmath", "none"]);
+export const platformEnum = pgEnum("platform", ["wordpress", "shopify"]);
 export const seoCategoryEnum = pgEnum("seo_category", ["meta", "content", "technical", "links", "images", "schema", "performance"]);
 export const issueSeverityEnum = pgEnum("issue_severity", ["critical", "warning", "notice"]);
 export const issueStatusEnum = pgEnum("issue_status", ["detected", "queued", "approved", "applied", "verified", "dismissed", "failed"]);
@@ -85,10 +86,15 @@ export const blogs = pgTable("blogs", {
   id: uuid("id").defaultRandom().primaryKey(),
   clientId: uuid("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
   domain: varchar("domain", { length: 255 }).notNull(),
+  platform: platformEnum("platform").default("wordpress").notNull(),
   wpUrl: varchar("wp_url", { length: 500 }),
   wpUsername: varchar("wp_username", { length: 255 }),
   wpAppPassword: varchar("wp_app_password", { length: 255 }),
   seoPlugin: seoPluginEnum("seo_plugin").default("none"),
+  shopifyStoreUrl: varchar("shopify_store_url", { length: 500 }),
+  shopifyAdminApiToken: varchar("shopify_admin_api_token", { length: 500 }),
+  shopifyApiVersion: varchar("shopify_api_version", { length: 20 }).default("2024-07"),
+  shopifyBlogId: varchar("shopify_blog_id", { length: 50 }),
   hostingProvider: varchar("hosting_provider", { length: 255 }),
   hostingLoginUrl: varchar("hosting_login_url", { length: 500 }),
   hostingUsername: varchar("hosting_username", { length: 255 }),

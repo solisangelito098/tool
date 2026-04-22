@@ -60,21 +60,15 @@ export function BlogForm({
     defaultValues: {
       clientId: defaultClientId || defaultValues?.clientId || "",
       domain: defaultValues?.domain || "",
+      platform: defaultValues?.platform || "wordpress",
       wpUrl: defaultValues?.wpUrl || "",
       wpUsername: defaultValues?.wpUsername || "",
       wpAppPassword: defaultValues?.wpAppPassword || "",
       seoPlugin: defaultValues?.seoPlugin || "none",
-      hostingProvider: defaultValues?.hostingProvider || "",
-      hostingLoginUrl: defaultValues?.hostingLoginUrl || "",
-      hostingUsername: defaultValues?.hostingUsername || "",
-      hostingPassword: defaultValues?.hostingPassword || "",
-      registrar: defaultValues?.registrar || "",
-      registrarLoginUrl: defaultValues?.registrarLoginUrl || "",
-      registrarUsername: defaultValues?.registrarUsername || "",
-      registrarPassword: defaultValues?.registrarPassword || "",
-      domainExpiryDate: defaultValues?.domainExpiryDate || "",
-      hostingExpiryDate: defaultValues?.hostingExpiryDate || "",
-      sslExpiryDate: defaultValues?.sslExpiryDate || "",
+      shopifyStoreUrl: defaultValues?.shopifyStoreUrl || "",
+      shopifyAdminApiToken: defaultValues?.shopifyAdminApiToken || "",
+      shopifyApiVersion: defaultValues?.shopifyApiVersion || "2024-07",
+      shopifyBlogId: defaultValues?.shopifyBlogId || "",
       postingFrequency: defaultValues?.postingFrequency || "",
       postingFrequencyDays: defaultValues?.postingFrequencyDays ?? undefined,
       status: defaultValues?.status || "setup",
@@ -89,6 +83,8 @@ export function BlogForm({
     watch,
     formState: { errors },
   } = form;
+
+  const platform = watch("platform");
 
   const onSubmit = (data: CreateBlogInput) => {
     startTransition(async () => {
@@ -114,7 +110,6 @@ export function BlogForm({
     });
   };
 
-  // Helper to render a field group
   const Field = ({
     label,
     name,
@@ -151,7 +146,6 @@ export function BlogForm({
           <CardDescription>Basic blog identification</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          {/* Client Selector */}
           <div className="space-y-1.5">
             <Label htmlFor="clientId">Client</Label>
             <Select
@@ -175,9 +169,7 @@ export function BlogForm({
           </div>
 
           <Field label="Domain" name="domain" placeholder="example.com" />
-          <Field label="WordPress URL" name="wpUrl" placeholder="https://example.com" />
 
-          {/* Status Selector */}
           <div className="space-y-1.5">
             <Label htmlFor="status">Status</Label>
             <Select
@@ -200,90 +192,135 @@ export function BlogForm({
         </CardContent>
       </Card>
 
-      {/* WordPress Credentials */}
+      {/* Platform Selector */}
       <Card>
         <CardHeader>
-          <CardTitle>WordPress Credentials</CardTitle>
-          <CardDescription>REST API authentication details</CardDescription>
+          <CardTitle>Platform</CardTitle>
+          <CardDescription>
+            Choose the CMS this blog publishes to
+          </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field label="WP Username" name="wpUsername" placeholder="admin" />
-          <Field
-            label="WP Application Password"
-            name="wpAppPassword"
-            type="password"
-            placeholder="xxxx xxxx xxxx xxxx"
-          />
-          <div className="space-y-1.5">
-            <Label htmlFor="seoPlugin">SEO Plugin</Label>
-            <Select
-              value={watch("seoPlugin")}
-              onValueChange={(v) =>
-                setValue("seoPlugin", v as CreateBlogInput["seoPlugin"], {
-                  shouldValidate: true,
-                })
+        <CardContent>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() =>
+                setValue("platform", "wordpress", { shouldValidate: true })
               }
+              className={`flex flex-col items-start gap-1 rounded-lg border-2 p-4 text-left transition-colors ${
+                platform === "wordpress"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50"
+              }`}
             >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select SEO plugin" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="yoast">Yoast SEO</SelectItem>
-                <SelectItem value="rankmath">Rank Math</SelectItem>
-                <SelectItem value="none">None</SelectItem>
-              </SelectContent>
-            </Select>
+              <span className="font-medium">WordPress</span>
+              <span className="text-xs text-muted-foreground">
+                Self-hosted or WP.com via REST API + Application Password
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setValue("platform", "shopify", { shouldValidate: true })
+              }
+              className={`flex flex-col items-start gap-1 rounded-lg border-2 p-4 text-left transition-colors ${
+                platform === "shopify"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50"
+              }`}
+            >
+              <span className="font-medium">Shopify</span>
+              <span className="text-xs text-muted-foreground">
+                Shopify store blog via Admin API access token
+              </span>
+            </button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Hosting */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Hosting</CardTitle>
-          <CardDescription>Hosting provider credentials and expiry</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field label="Hosting Provider" name="hostingProvider" placeholder="SiteGround" />
-          <Field
-            label="Login URL"
-            name="hostingLoginUrl"
-            placeholder="https://my.siteground.com"
-          />
-          <Field label="Username" name="hostingUsername" />
-          <Field label="Password" name="hostingPassword" type="password" />
-          <Field label="Hosting Expiry Date" name="hostingExpiryDate" type="date" />
-        </CardContent>
-      </Card>
+      {/* WordPress Credentials */}
+      {platform === "wordpress" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>WordPress Credentials</CardTitle>
+            <CardDescription>
+              REST API authentication. Generate an Application Password under
+              Users → Profile → Application Passwords.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="WordPress URL"
+              name="wpUrl"
+              placeholder="https://example.com"
+            />
+            <Field label="WP Username" name="wpUsername" placeholder="admin" />
+            <Field
+              label="WP Application Password"
+              name="wpAppPassword"
+              type="password"
+              placeholder="xxxx xxxx xxxx xxxx"
+            />
+            <div className="space-y-1.5">
+              <Label htmlFor="seoPlugin">SEO Plugin</Label>
+              <Select
+                value={watch("seoPlugin")}
+                onValueChange={(v) =>
+                  setValue("seoPlugin", v as CreateBlogInput["seoPlugin"], {
+                    shouldValidate: true,
+                  })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select SEO plugin" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="yoast">Yoast SEO</SelectItem>
+                  <SelectItem value="rankmath">Rank Math</SelectItem>
+                  <SelectItem value="none">None</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Domain Registrar */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Domain Registrar</CardTitle>
-          <CardDescription>Domain registration details</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field label="Registrar" name="registrar" placeholder="Namecheap" />
-          <Field
-            label="Login URL"
-            name="registrarLoginUrl"
-            placeholder="https://ap.www.namecheap.com"
-          />
-          <Field label="Username" name="registrarUsername" />
-          <Field label="Password" name="registrarPassword" type="password" />
-          <Field label="Domain Expiry Date" name="domainExpiryDate" type="date" />
-        </CardContent>
-      </Card>
-
-      {/* SSL */}
-      <Card>
-        <CardHeader>
-          <CardTitle>SSL Certificate</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Field label="SSL Expiry Date" name="sslExpiryDate" type="date" />
-        </CardContent>
-      </Card>
+      {/* Shopify Credentials */}
+      {platform === "shopify" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Shopify Credentials</CardTitle>
+            <CardDescription>
+              Create a custom app in your Shopify admin and grant it
+              read/write_content scopes. Paste the Admin API access token
+              below.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Store URL"
+              name="shopifyStoreUrl"
+              placeholder="mystore.myshopify.com"
+            />
+            <Field
+              label="Admin API Access Token"
+              name="shopifyAdminApiToken"
+              type="password"
+              placeholder="shpat_xxxxxxxxxxxxxxxx"
+            />
+            <Field
+              label="API Version"
+              name="shopifyApiVersion"
+              placeholder="2024-07"
+            />
+            <Field
+              label="Blog ID (optional)"
+              name="shopifyBlogId"
+              placeholder="Leave blank to use first blog"
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Posting Config */}
       <Card>
@@ -331,7 +368,6 @@ export function BlogForm({
 
       <Separator />
 
-      {/* Actions */}
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={isPending}>
           {isPending && <Loader2 className="size-4 animate-spin" data-icon="inline-start" />}
