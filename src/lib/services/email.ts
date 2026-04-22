@@ -1,27 +1,31 @@
 import { Resend } from "resend";
 
 let _resend: Resend | undefined;
-function resendClient(): Resend {
-  if (!_resend) {
-    const key = process.env.RESEND_API_KEY;
-    if (!key) throw new Error("RESEND_API_KEY is not set");
-    _resend = new Resend(key);
-  }
+function resendClient(): Resend | null {
+  if (_resend) return _resend;
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return null;
+  _resend = new Resend(key);
   return _resend;
 }
-const resend = new Proxy({} as Resend, {
-  get(_t, prop, receiver) {
-    return Reflect.get(resendClient() as object, prop, receiver);
-  },
-});
 
 const FROM_EMAIL = process.env.EMAIL_FROM || "NETGRID <noreply@netgrid.io>";
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3005";
 
 export async function sendMagicLink(email: string, token: string) {
-  const verifyUrl = `${APP_URL}/api/auth/verify?token=${encodeURIComponent(token)}`;
+  const verifyUrl = `${APP_URL}/verify?token=${encodeURIComponent(token)}`;
 
-  const { data, error } = await resend.emails.send({
+  const client = resendClient();
+  if (!client) {
+    // Dev fallback: log the link so you can click it without Resend set up.
+    console.log("\n─── Magic link (RESEND_API_KEY not set) ───────────────");
+    console.log(`  to:   ${email}`);
+    console.log(`  link: ${verifyUrl}`);
+    console.log("───────────────────────────────────────────────────────\n");
+    return { id: "dev-log", from: FROM_EMAIL, to: email };
+  }
+
+  const { data, error } = await client.emails.send({
     from: FROM_EMAIL,
     to: email,
     subject: "Your NETGRID Login Link",
@@ -58,7 +62,9 @@ export async function sendInvoiceReminder(
     currency?: string;
   }
 ) {
-  const { data, error } = await resend.emails.send({
+  const client = resendClient();
+  if (!client) throw new Error("RESEND_API_KEY is not set");
+  const { data, error } = await client.emails.send({
     from: FROM_EMAIL,
     to: email,
     subject: `Invoice Reminder: ${invoiceData.invoiceNumber}`,
@@ -69,7 +75,7 @@ export async function sendInvoiceReminder(
         <p>This is a reminder that invoice <strong>${invoiceData.invoiceNumber}</strong>
         for <strong>${invoiceData.currency || "CAD"} $${invoiceData.amount}</strong>
         is due on <strong>${invoiceData.dueDate}</strong>.</p>
-        <a href="${APP_URL}/portal/billing"
+        <a href="${APP_URL}/portal/invoices"
            style="display: inline-block; background: #111; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 500; margin: 16px 0;">
           View Invoice
         </a>
@@ -100,7 +106,9 @@ export async function sendRenewalAlert(
 ) {
   const urgency = alertData.daysUntilExpiry <= 7 ? "URGENT: " : "";
 
-  const { data, error } = await resend.emails.send({
+  const client = resendClient();
+  if (!client) throw new Error("RESEND_API_KEY is not set");
+  const { data, error } = await client.emails.send({
     from: FROM_EMAIL,
     to: email,
     subject: `${urgency}${alertData.renewalType} Renewal - ${alertData.domain}`,
@@ -137,7 +145,9 @@ export async function sendReportNotification(
     periodEnd: string;
   }
 ) {
-  const { data, error } = await resend.emails.send({
+  const client = resendClient();
+  if (!client) throw new Error("RESEND_API_KEY is not set");
+  const { data, error } = await client.emails.send({
     from: FROM_EMAIL,
     to: email,
     subject: `New Report Available: ${reportData.reportTitle}`,
@@ -168,7 +178,9 @@ export async function sendGenericEmail(
   subject: string,
   html: string
 ) {
-  const { data, error } = await resend.emails.send({
+  const client = resendClient();
+  if (!client) throw new Error("RESEND_API_KEY is not set");
+  const { data, error } = await client.emails.send({
     from: FROM_EMAIL,
     to,
     subject,

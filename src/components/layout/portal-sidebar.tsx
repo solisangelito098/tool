@@ -11,6 +11,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Globe,
+  FileText,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -29,10 +31,12 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { title: "Dashboard", href: "/portal", icon: LayoutDashboard },
+  { title: "Blogs", href: "/portal/blogs", icon: FileText },
   { title: "SEO Health", href: "/portal/seo", icon: Search },
   { title: "Reports", href: "/portal/reports", icon: BarChart3 },
   { title: "Invoices", href: "/portal/invoices", icon: Receipt },
   { title: "Messages", href: "/portal/messages", icon: MessageSquare },
+  { title: "Settings", href: "/portal/settings", icon: Settings },
 ];
 
 interface PortalSidebarProps {
