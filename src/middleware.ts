@@ -36,6 +36,7 @@ export default withAuth(
         if (
           pathname.startsWith("/login") ||
           pathname.startsWith("/magic-link") ||
+          pathname.startsWith("/auth/verify") ||
           pathname.startsWith("/verify") ||
           pathname.startsWith("/api/auth") ||
           pathname.startsWith("/api/cron")

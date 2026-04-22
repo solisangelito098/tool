@@ -1,9 +1,60 @@
+// import { NextResponse } from "next/server";
+// import { db } from "@/lib/db";
+// import { clients } from "@/lib/db/schema";
+// import { sql } from "drizzle-orm";
+// import { generateMagicToken } from "@/lib/auth/helpers";
+// import { sendMagicLink } from "@/lib/services/email";
+
+// export async function POST(request: Request) {
+//   try {
+//     const body = await request.json();
+//     const { email } = body;
+
+//     if (!email || typeof email !== "string") {
+//       return NextResponse.json(
+//         { error: "Email is required" },
+//         { status: 400 }
+//       );
+//     }
+
+//     const normalizedEmail = email.toLowerCase().trim();
+
+//     const [client] = await db
+//       .select()
+//       .from(clients)
+//       .where(sql`contact_email = ${normalizedEmail}`)
+//       .limit(1);
+
+//     if (!client) {
+//       return NextResponse.json(
+//         { error: "No account found with this email" },
+//         { status: 404 }
+//       );
+//     }
+
+//     const token = generateMagicToken(client.id);
+//     await sendMagicLink(normalizedEmail, token);
+
+//     return NextResponse.json(
+//       { message: "Magic link sent successfully" },
+//       { status: 200 }
+//     );
+//   } catch (error) {
+//     console.error("Magic link error:", error);
+//     return NextResponse.json(
+//       { error: "Internal server error" },
+//       { status: 500 }
+//     );
+//   }
+// }
+
+
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { users } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { clients } from "@/lib/db/schema";
+import { sql } from "drizzle-orm";
 import { generateMagicToken } from "@/lib/auth/helpers";
-import { sendMagicLink } from "@/lib/services/email";
+// import { sendMagicLink } from "@/lib/services/email";
 
 export async function POST(request: Request) {
   try {
@@ -17,25 +68,31 @@ export async function POST(request: Request) {
       );
     }
 
-    // Find user with matching email and client role
-    const [user] = await db
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const [client] = await db
       .select()
-      .from(users)
-      .where(and(eq(users.email, email.toLowerCase().trim()), eq(users.role, "client")))
+      .from(clients)
+      .where(sql`contact_email = ${normalizedEmail}`)
       .limit(1);
 
-    if (!user) {
+    if (!client) {
       return NextResponse.json(
-        { error: "No client account found with this email" },
+        { error: "No account found with this email" },
         { status: 404 }
       );
     }
 
-    // Generate magic token
-    const token = generateMagicToken(user.id);
+    const token = generateMagicToken(client.id);
 
-    // Send magic link email
-    await sendMagicLink(user.email, token);
+    // --- DEV MODE: log magic link to console instead of sending email ---
+    const magicUrl = `${process.env.NEXT_PUBLIC_APP_URL}/auth/verify?token=${token}`;
+    console.log(`\n🔗 Magic link for ${normalizedEmail}:\n${magicUrl}\n`);
+    // --- END DEV MODE ---
+
+    // --- PRODUCTION: uncomment below and comment out the dev block above ---
+    // await sendMagicLink(normalizedEmail, token);
+    // --- END PRODUCTION ---
 
     return NextResponse.json(
       { message: "Magic link sent successfully" },
