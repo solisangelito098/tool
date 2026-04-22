@@ -5,6 +5,7 @@ export type BillingType = "one_time" | "monthly" | "yearly";
 export type BillingStatus = "active" | "overdue" | "paused" | "cancelled";
 export type BlogStatus = "active" | "paused" | "setup" | "decommissioned";
 export type SeoPlugin = "yoast" | "rankmath" | "none";
+export type Platform = "wordpress" | "shopify";
 export type SeoCategory = "meta" | "content" | "technical" | "links" | "images" | "schema" | "performance";
 export type IssueSeverity = "critical" | "warning" | "notice";
 export type IssueStatus = "detected" | "queued" | "approved" | "applied" | "verified" | "dismissed" | "failed";
@@ -51,13 +52,35 @@ export interface CsvImportResult {
   errors: Array<{ row: number; field: string; message: string }>;
 }
 
-// WP Connection test result
-export interface WpConnectionResult {
+// Platform connection test result (WordPress or Shopify)
+export interface ConnectionResult {
   success: boolean;
   message: string;
+  platform?: Platform;
   wpVersion?: string;
   seoPlugin?: SeoPlugin;
   userRole?: string;
+  shopifyStoreName?: string;
+  shopifyPlan?: string;
+}
+
+// Back-compat alias — older code imports WpConnectionResult
+export type WpConnectionResult = ConnectionResult;
+
+// Generic post input for publishing
+export interface PublishPostInput {
+  title: string;
+  content: string;
+  excerpt?: string;
+  status?: "draft" | "publish";
+  tags?: string[];
+}
+
+export interface PublishPostResult {
+  success: boolean;
+  message: string;
+  postId?: string | number;
+  postUrl?: string;
 }
 
 // Activity log entry details

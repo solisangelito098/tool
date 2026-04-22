@@ -4,11 +4,18 @@ import { db } from "@/lib/db";
 import { blogs, clients } from "@/lib/db/schema";
 import { requireAdmin } from "@/lib/auth/helpers";
 import { createBlogSchema, updateBlogSchema } from "@/lib/validators/blog";
-import { testConnection } from "@/lib/services/wp-client";
+import { testConnection as platformTestConnection } from "@/lib/services/platform-client";
 import { parseBlogCsv } from "@/lib/services/csv-parser";
 import { eq, and, like, sql, desc, asc, count } from "drizzle-orm";
 import { DEFAULT_PAGE_SIZE } from "@/lib/constants";
-import type { BlogStatus, WpConnectionResult, CsvImportResult } from "@/lib/types";
+import type {
+  BlogStatus,
+  WpConnectionResult,
+  CsvImportResult,
+  PublishPostInput,
+  PublishPostResult,
+} from "@/lib/types";
+import { publishPost as platformPublishPost } from "@/lib/services/platform-client";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -28,8 +35,10 @@ interface GetBlogsResult {
     clientId: string;
     clientName: string;
     domain: string;
+    platform: string;
     wpUrl: string | null;
     seoPlugin: string | null;
+    shopifyStoreUrl: string | null;
     hostingProvider: string | null;
     registrar: string | null;
     domainExpiryDate: string | null;
@@ -110,8 +119,10 @@ export async function getBlogs(params: GetBlogsParams = {}): Promise<GetBlogsRes
       clientId: blogs.clientId,
       clientName: clients.name,
       domain: blogs.domain,
+      platform: blogs.platform,
       wpUrl: blogs.wpUrl,
       seoPlugin: blogs.seoPlugin,
+      shopifyStoreUrl: blogs.shopifyStoreUrl,
       hostingProvider: blogs.hostingProvider,
       registrar: blogs.registrar,
       domainExpiryDate: blogs.domainExpiryDate,
@@ -157,10 +168,15 @@ export async function getBlog(id: string) {
       clientId: blogs.clientId,
       clientName: clients.name,
       domain: blogs.domain,
+      platform: blogs.platform,
       wpUrl: blogs.wpUrl,
       wpUsername: blogs.wpUsername,
       wpAppPassword: blogs.wpAppPassword,
       seoPlugin: blogs.seoPlugin,
+      shopifyStoreUrl: blogs.shopifyStoreUrl,
+      shopifyAdminApiToken: blogs.shopifyAdminApiToken,
+      shopifyApiVersion: blogs.shopifyApiVersion,
+      shopifyBlogId: blogs.shopifyBlogId,
       hostingProvider: blogs.hostingProvider,
       hostingLoginUrl: blogs.hostingLoginUrl,
       hostingUsername: blogs.hostingUsername,
@@ -228,10 +244,15 @@ export async function createBlog(data: unknown) {
     .values({
       clientId: input.clientId,
       domain: input.domain,
+      platform: input.platform ?? "wordpress",
       wpUrl: cleanValue(input.wpUrl),
       wpUsername: cleanValue(input.wpUsername),
       wpAppPassword: cleanValue(input.wpAppPassword),
       seoPlugin: input.seoPlugin,
+      shopifyStoreUrl: cleanValue(input.shopifyStoreUrl),
+      shopifyAdminApiToken: cleanValue(input.shopifyAdminApiToken),
+      shopifyApiVersion: cleanValue(input.shopifyApiVersion) ?? "2024-07",
+      shopifyBlogId: cleanValue(input.shopifyBlogId),
       hostingProvider: cleanValue(input.hostingProvider),
       hostingLoginUrl: cleanValue(input.hostingLoginUrl),
       hostingUsername: cleanValue(input.hostingUsername),
@@ -296,10 +317,15 @@ export async function updateBlog(id: string, data: unknown) {
   const updateData: Record<string, unknown> = { updatedAt: new Date() };
 
   if (input.domain !== undefined) updateData.domain = input.domain;
+  if (input.platform !== undefined) updateData.platform = input.platform;
   if (input.wpUrl !== undefined) updateData.wpUrl = cleanValue(input.wpUrl);
   if (input.wpUsername !== undefined) updateData.wpUsername = cleanValue(input.wpUsername);
   if (input.wpAppPassword !== undefined) updateData.wpAppPassword = cleanValue(input.wpAppPassword);
   if (input.seoPlugin !== undefined) updateData.seoPlugin = input.seoPlugin;
+  if (input.shopifyStoreUrl !== undefined) updateData.shopifyStoreUrl = cleanValue(input.shopifyStoreUrl);
+  if (input.shopifyAdminApiToken !== undefined) updateData.shopifyAdminApiToken = cleanValue(input.shopifyAdminApiToken);
+  if (input.shopifyApiVersion !== undefined) updateData.shopifyApiVersion = cleanValue(input.shopifyApiVersion);
+  if (input.shopifyBlogId !== undefined) updateData.shopifyBlogId = cleanValue(input.shopifyBlogId);
   if (input.hostingProvider !== undefined) updateData.hostingProvider = cleanValue(input.hostingProvider);
   if (input.hostingLoginUrl !== undefined) updateData.hostingLoginUrl = cleanValue(input.hostingLoginUrl);
   if (input.hostingUsername !== undefined) updateData.hostingUsername = cleanValue(input.hostingUsername);
@@ -350,9 +376,14 @@ export async function testBlogConnection(id: string): Promise<WpConnectionResult
 
   const [blog] = await db
     .select({
+      platform: blogs.platform,
       wpUrl: blogs.wpUrl,
       wpUsername: blogs.wpUsername,
       wpAppPassword: blogs.wpAppPassword,
+      shopifyStoreUrl: blogs.shopifyStoreUrl,
+      shopifyAdminApiToken: blogs.shopifyAdminApiToken,
+      shopifyApiVersion: blogs.shopifyApiVersion,
+      shopifyBlogId: blogs.shopifyBlogId,
     })
     .from(blogs)
     .where(eq(blogs.id, id));
@@ -361,13 +392,8 @@ export async function testBlogConnection(id: string): Promise<WpConnectionResult
     return { success: false, message: "Blog not found" };
   }
 
-  if (!blog.wpUrl || !blog.wpUsername || !blog.wpAppPassword) {
-    return { success: false, message: "WordPress credentials are incomplete" };
-  }
+  const result = await platformTestConnection(blog);
 
-  const result = await testConnection(blog.wpUrl, blog.wpUsername, blog.wpAppPassword);
-
-  // Update blog record with detected info
   if (result.success) {
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (result.seoPlugin) {
@@ -377,6 +403,35 @@ export async function testBlogConnection(id: string): Promise<WpConnectionResult
   }
 
   return result;
+}
+
+// ─── Publish a Post / Article ───────────────────────────────────────────────
+
+export async function publishBlogPost(
+  id: string,
+  input: PublishPostInput,
+): Promise<PublishPostResult> {
+  await requireAdmin();
+
+  const [blog] = await db
+    .select({
+      platform: blogs.platform,
+      wpUrl: blogs.wpUrl,
+      wpUsername: blogs.wpUsername,
+      wpAppPassword: blogs.wpAppPassword,
+      shopifyStoreUrl: blogs.shopifyStoreUrl,
+      shopifyAdminApiToken: blogs.shopifyAdminApiToken,
+      shopifyApiVersion: blogs.shopifyApiVersion,
+      shopifyBlogId: blogs.shopifyBlogId,
+    })
+    .from(blogs)
+    .where(eq(blogs.id, id));
+
+  if (!blog) {
+    return { success: false, message: "Blog not found" };
+  }
+
+  return platformPublishPost(blog, input);
 }
 
 // ─── Import Blogs from CSV ──────────────────────────────────────────────────
