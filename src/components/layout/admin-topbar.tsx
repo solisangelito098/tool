@@ -140,7 +140,7 @@ export function AdminTopbar({ onSidebarToggle }: AdminTopbarProps) {
           <DropdownMenuSeparator />
           <DropdownMenuItem
             className="text-destructive"
-            onClick={() => signOut({ callbackUrl: "/auth/login" })}
+            onClick={() => signOut({ callbackUrl: "/login" })}
           >
             <LogOut className="size-4" />
             Sign out
