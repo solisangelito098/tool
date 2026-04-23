@@ -338,3 +338,191 @@ export async function updateRankMathMeta(
   });
   return res.data;
 }
+
+// ─── Validation & Diagnostics ───────────────────────────────────────────────
+
+export interface AppPasswordValidation {
+  isValid: boolean;
+  format: "WordPress Application Password" | "Unknown format";
+  issues: string[];
+}
+
+/**
+ * Validate the format of a WordPress Application Password.
+ * Real app passwords are 24 alphanumeric characters split into 6 groups of 4
+ * separated by single spaces — 29 characters total.
+ */
+export function validateApplicationPassword(password: string): AppPasswordValidation {
+  const issues: string[] = [];
+  const wpFormat = /^[a-zA-Z0-9]{4} [a-zA-Z0-9]{4} [a-zA-Z0-9]{4} [a-zA-Z0-9]{4} [a-zA-Z0-9]{4} [a-zA-Z0-9]{4}$/;
+
+  if (password.length !== 29) {
+    issues.push(`Length should be 29 characters, got ${password.length}`);
+  }
+  if (!wpFormat.test(password)) {
+    issues.push("Does not match WordPress Application Password format (xxxx xxxx xxxx xxxx xxxx xxxx)");
+  }
+  if (!/^[a-zA-Z0-9 ]+$/.test(password)) {
+    issues.push("Contains invalid characters (only alphanumeric and spaces allowed)");
+  }
+
+  return {
+    isValid: issues.length === 0,
+    format: wpFormat.test(password) ? "WordPress Application Password" : "Unknown format",
+    issues,
+  };
+}
+
+export interface DiagnosticResult {
+  restApiAvailable: boolean;
+  authenticationWorking: boolean;
+  userInfo?: WpUser;
+  errors: string[];
+  recommendations: string[];
+}
+
+/**
+ * Rich diagnostic test that separates REST-API availability from authentication,
+ * and surfaces actionable recommendations per failure mode.
+ */
+export async function diagnosticTest(
+  wpUrl: string,
+  username: string,
+  appPassword: string,
+): Promise<DiagnosticResult> {
+  const errors: string[] = [];
+  const recommendations: string[] = [];
+  let restApiAvailable = false;
+  let authenticationWorking = false;
+  let userInfo: WpUser | undefined;
+
+  const baseURL = normalizeWpUrl(wpUrl);
+
+  // 1. REST API availability (unauthenticated probe)
+  try {
+    const res = await axios.get(`${baseURL}/wp-json/wp/v2/`, {
+      timeout: WP_TIMEOUT_MS,
+      headers: { "Content-Type": "application/json" },
+      validateStatus: () => true,
+    });
+    if (res.status >= 200 && res.status < 300) {
+      restApiAvailable = true;
+    } else {
+      errors.push(`REST API not available: HTTP ${res.status}`);
+      recommendations.push("Enable the WordPress REST API or check if a security plugin is blocking /wp-json/");
+    }
+  } catch (err) {
+    errors.push(`Network error reaching REST API: ${err instanceof Error ? err.message : "unknown"}`);
+    recommendations.push("Check that the WordPress URL is correct and the site is publicly reachable");
+  }
+
+  // 2. Authentication probe
+  try {
+    const client = createClient(wpUrl, username, appPassword);
+    const res = await client.get<WpUser>("/wp-json/wp/v2/users/me", {
+      validateStatus: () => true,
+    });
+
+    if (res.status >= 200 && res.status < 300) {
+      authenticationWorking = true;
+      userInfo = res.data;
+    } else {
+      switch (res.status) {
+        case 401:
+          errors.push("Authentication failed — invalid username or Application Password");
+          recommendations.push("Verify the WordPress username is correct");
+          recommendations.push("Regenerate the Application Password and copy it exactly (including spaces)");
+          recommendations.push("Confirm the Application Password has not been revoked");
+          recommendations.push('If on Dreamhost, add to .htaccess: SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1');
+          break;
+        case 403:
+          errors.push("Authenticated but the user lacks permissions");
+          recommendations.push("Ensure the WordPress user has the edit_posts or publish_posts capability");
+          break;
+        case 404:
+          errors.push("WordPress REST API endpoint /wp/v2/users/me not found");
+          recommendations.push("Update WordPress and confirm the REST API is enabled");
+          break;
+        default:
+          errors.push(`Unexpected authentication response: HTTP ${res.status}`);
+          recommendations.push("Check WordPress error logs for details");
+      }
+    }
+
+    const server = (res.headers?.server as string | undefined)?.toLowerCase();
+    if (server?.includes("litespeed")) {
+      recommendations.push("LiteSpeed server detected — review LiteSpeed Cache REST API exclusions");
+    }
+    const platform = (res.headers?.platform as string | undefined)?.toLowerCase();
+    if (platform === "hostinger") {
+      recommendations.push("Hostinger hosting detected — check their security rules for external API access");
+    }
+  } catch (err) {
+    errors.push(`Authentication probe error: ${err instanceof Error ? err.message : "unknown"}`);
+  }
+
+  return { restApiAvailable, authenticationWorking, userInfo, errors, recommendations };
+}
+
+export interface PublishPermissionsResult {
+  canPublish: boolean;
+  roles: string[];
+  message: string;
+}
+
+/**
+ * Verify the authenticated user has a role that allows publishing.
+ */
+export async function verifyPublishPermissions(
+  wpUrl: string,
+  username: string,
+  appPassword: string,
+): Promise<PublishPermissionsResult> {
+  try {
+    const client = createClient(wpUrl, username, appPassword);
+    const res = await client.get<WpUser>("/wp-json/wp/v2/users/me", {
+      params: { context: "edit" },
+    });
+    const roles = res.data.roles ?? [];
+    const canPublish = roles.some((r) =>
+      ["administrator", "editor", "author"].includes(r),
+    );
+    return {
+      canPublish,
+      roles,
+      message: canPublish
+        ? "User has publishing permissions"
+        : `User roles (${roles.join(", ") || "none"}) do not include publishing permissions`,
+    };
+  } catch (error) {
+    return {
+      canPublish: false,
+      roles: [],
+      message: formatError(error),
+    };
+  }
+}
+
+/**
+ * Create a throwaway draft post to confirm the publish pipeline works end-to-end.
+ */
+export async function createTestDraft(
+  wpUrl: string,
+  username: string,
+  appPassword: string,
+): Promise<{ success: boolean; postId?: number; message: string }> {
+  const result = await createPost(wpUrl, username, appPassword, {
+    title: "Test Draft — Netgrid Connection Check",
+    content: "<p>Automated test draft created by Netgrid to verify publishing. Safe to delete.</p>",
+    excerpt: "Automated connection test draft.",
+    status: "draft",
+  });
+  if (!result.success) {
+    return { success: false, message: result.message };
+  }
+  return {
+    success: true,
+    postId: typeof result.postId === "number" ? result.postId : undefined,
+    message: `Test draft created (ID: ${result.postId})`,
+  };
+}
