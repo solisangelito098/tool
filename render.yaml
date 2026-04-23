@@ -131,3 +131,22 @@ services:
           property: host
       - key: CRON_SECRET
         sync: false
+
+  # Auto-publish: generate + publish a post for every active blog whose
+  # postingFrequencyDays interval has elapsed. Runs daily at 09:00 UTC.
+  - type: cron
+    name: netgrid-cron-auto-publish
+    runtime: docker
+    schedule: "0 9 * * *"
+    dockerfilePath: ./cron/Dockerfile
+    dockerContext: ./cron
+    envVars:
+      - key: CRON_PATH
+        value: /api/cron/auto-publish
+      - key: APP_URL
+        fromService:
+          type: web
+          name: netgrid
+          property: host
+      - key: CRON_SECRET
+        sync: false
