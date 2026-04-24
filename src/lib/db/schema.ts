@@ -109,6 +109,13 @@ export const blogs = pgTable("blogs", {
   sslExpiryDate: date("ssl_expiry_date"),
   postingFrequency: varchar("posting_frequency", { length: 50 }),
   postingFrequencyDays: integer("posting_frequency_days"),
+  // Sub-day cadence. Daily quota (e.g. 2 = max 2 posts per UTC day). Takes
+  // precedence over postingFrequencyDays when set.
+  postsPerDay: integer("posts_per_day"),
+  // Minimum hours between consecutive posts on this blog. e.g. with
+  // postsPerDay=2 and postingIntervalHours=6: post #1 at T+0, post #2 at T+6h,
+  // then wait for the next UTC day.
+  postingIntervalHours: integer("posting_interval_hours"),
   lastPostVerifiedAt: timestamp("last_post_verified_at"),
   lastPostTitle: varchar("last_post_title", { length: 500 }),
   currentSeoScore: integer("current_seo_score"),
