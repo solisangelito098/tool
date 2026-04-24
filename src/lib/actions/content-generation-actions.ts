@@ -2,7 +2,7 @@
 
 import { db } from "@/lib/db";
 import { blogs, clients, generatedPosts } from "@/lib/db/schema";
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, or, sql } from "drizzle-orm";
 import { requireAdmin } from "@/lib/auth/helpers";
 import {
   generateContent,
@@ -41,17 +41,72 @@ function blogHasCredentials(blog: typeof blogs.$inferSelect): boolean {
   return Boolean(blog.wpUrl && blog.wpUsername && blog.wpAppPassword);
 }
 
-function isBlogDueForPost(blog: typeof blogs.$inferSelect, now: Date = new Date()): boolean {
-  if (!blog.postingFrequencyDays || blog.postingFrequencyDays <= 0) return false;
+/** Start of the current UTC day (used for the per-day cap). */
+function startOfUtcDay(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
 
-  // Use lastPostVerifiedAt as the reference for "last seen post" — falls back to
-  // never-posted if null.
+/** Reason a blog is or isn't due. The string is what the cron reports. */
+type DueDecision =
+  | { due: true }
+  | { due: false; reason: string };
+
+/**
+ * Cadence eligibility — does NOT check the per-client total cap (that needs a
+ * separate query, done in runAutoPublishCron).
+ *
+ * Logic:
+ *   - If postsPerDay set: today's count must be < postsPerDay.
+ *     If postingIntervalHours also set: lastPostVerifiedAt must be >= that many
+ *     hours ago. If not set, defaults to 24/postsPerDay (even spacing).
+ *   - Else if postingFrequencyDays set: lastPostVerifiedAt must be >= that many
+ *     days ago.
+ *   - Else: not auto-publishable.
+ */
+function isBlogDueForPost(
+  blog: typeof blogs.$inferSelect,
+  todaysPublishedCount: number,
+  now: Date = new Date(),
+): DueDecision {
   const last = blog.lastPostVerifiedAt;
-  if (!last) return true;
+  const hour = 1000 * 60 * 60;
 
-  const dayMs = 1000 * 60 * 60 * 24;
-  const daysSince = (now.getTime() - last.getTime()) / dayMs;
-  return daysSince >= blog.postingFrequencyDays;
+  if (blog.postsPerDay && blog.postsPerDay > 0) {
+    if (todaysPublishedCount >= blog.postsPerDay) {
+      return {
+        due: false,
+        reason: `daily cap hit (${todaysPublishedCount}/${blog.postsPerDay} today)`,
+      };
+    }
+    if (last) {
+      const intervalHours =
+        blog.postingIntervalHours && blog.postingIntervalHours > 0
+          ? blog.postingIntervalHours
+          : Math.floor(24 / blog.postsPerDay);
+      const hoursSince = (now.getTime() - last.getTime()) / hour;
+      if (hoursSince < intervalHours) {
+        return {
+          due: false,
+          reason: `${hoursSince.toFixed(1)}h since last post < ${intervalHours}h interval`,
+        };
+      }
+    }
+    return { due: true };
+  }
+
+  if (blog.postingFrequencyDays && blog.postingFrequencyDays > 0) {
+    if (!last) return { due: true };
+    const daysSince = (now.getTime() - last.getTime()) / (24 * hour);
+    if (daysSince < blog.postingFrequencyDays) {
+      return {
+        due: false,
+        reason: `${daysSince.toFixed(2)}d since last post < ${blog.postingFrequencyDays}d`,
+      };
+    }
+    return { due: true };
+  }
+
+  return { due: false, reason: "no cadence configured (postsPerDay/postingFrequencyDays unset)" };
 }
 
 async function getRecentTitles(blogId: string, limit = 20): Promise<string[]> {
@@ -248,41 +303,145 @@ export async function generateAndPublishForBlog(
   return runGenerateAndPublish(input);
 }
 
-/** Cron-triggered sweep. Generates+publishes for every active blog whose
- * postingFrequencyDays interval has elapsed since the last seen post. */
-export async function runAutoPublishCron(): Promise<{
+export interface AutoPublishResult {
   considered: number;
   due: number;
   published: number;
   failed: number;
-  results: Array<{ blogId: string; domain: string; status: string; message: string }>;
-}> {
-  const activeBlogs = await db
-    .select()
-    .from(blogs)
-    .where(and(eq(blogs.status, "active"), isNotNull(blogs.postingFrequencyDays)));
+  skipped: number;
+  results: Array<{
+    blogId: string;
+    domain: string;
+    status: "published" | "generated" | "failed" | "skipped";
+    message: string;
+  }>;
+}
 
+/**
+ * Cron-triggered sweep. For every active blog with a cadence configured:
+ *   1. Skip if the client's lifetime published-post count >= clients.totalBlogsTarget
+ *      (when totalBlogsTarget > 0).
+ *   2. Skip if the blog isn't due (per-day cap or min interval not satisfied).
+ *   3. Otherwise generate + publish one post.
+ *
+ * Counts are tracked in-memory across the loop so two due blogs sharing a
+ * client don't both punch through the cap on the same run.
+ */
+export async function runAutoPublishCron(): Promise<AutoPublishResult> {
   const now = new Date();
-  const dueBlogs = activeBlogs.filter((b) => isBlogDueForPost(b, now) && blogHasCredentials(b));
+  const todayStart = startOfUtcDay(now);
+
+  // Active blogs with at least one cadence field set, joined with their client
+  // for niche + total cap.
+  const rows = await db
+    .select({
+      blog: blogs,
+      clientNiche: clients.niche,
+      clientTarget: clients.totalBlogsTarget,
+    })
+    .from(blogs)
+    .innerJoin(clients, eq(blogs.clientId, clients.id))
+    .where(
+      and(
+        eq(blogs.status, "active"),
+        or(isNotNull(blogs.postsPerDay), isNotNull(blogs.postingFrequencyDays)),
+      ),
+    );
+
+  // Per-client lifetime published count (used for totalBlogsTarget cap).
+  const clientCounts = await db
+    .select({
+      clientId: generatedPosts.clientId,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(generatedPosts)
+    .where(eq(generatedPosts.status, "published"))
+    .groupBy(generatedPosts.clientId);
+  const publishedByClient = new Map(clientCounts.map((r) => [r.clientId, r.n]));
+
+  // Per-blog count of posts already published today (for postsPerDay cap).
+  const blogCountsToday = await db
+    .select({
+      blogId: generatedPosts.blogId,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(generatedPosts)
+    .where(
+      and(
+        eq(generatedPosts.status, "published"),
+        gte(generatedPosts.publishedAt, todayStart),
+      ),
+    )
+    .groupBy(generatedPosts.blogId);
+  const publishedTodayByBlog = new Map(blogCountsToday.map((r) => [r.blogId, r.n]));
 
   let published = 0;
   let failed = 0;
-  const results: Array<{ blogId: string; domain: string; status: string; message: string }> = [];
+  let skipped = 0;
+  const results: AutoPublishResult["results"] = [];
 
-  for (const blog of dueBlogs) {
+  for (const { blog, clientTarget } of rows) {
+    const todayCount = publishedTodayByBlog.get(blog.id) ?? 0;
+    const clientCount = publishedByClient.get(blog.clientId) ?? 0;
+
+    // 1. Per-client total cap (clients.totalBlogsTarget acts as "total posts").
+    if (clientTarget && clientTarget > 0 && clientCount >= clientTarget) {
+      skipped++;
+      results.push({
+        blogId: blog.id,
+        domain: blog.domain,
+        status: "skipped",
+        message: `client cap hit (${clientCount}/${clientTarget} total posts)`,
+      });
+      continue;
+    }
+
+    // 2. Cadence eligibility.
+    const decision = isBlogDueForPost(blog, todayCount, now);
+    if (!decision.due) {
+      skipped++;
+      results.push({
+        blogId: blog.id,
+        domain: blog.domain,
+        status: "skipped",
+        message: decision.reason,
+      });
+      continue;
+    }
+
+    // 3. Credential check.
+    if (!blogHasCredentials(blog)) {
+      skipped++;
+      results.push({
+        blogId: blog.id,
+        domain: blog.domain,
+        status: "skipped",
+        message: `missing ${blog.platform} credentials`,
+      });
+      continue;
+    }
+
+    // 4. Run.
     try {
       const result = await runGenerateAndPublish({
         blogId: blog.id,
         isAutoGenerated: true,
       });
-      if (result.status === "published") published++;
-      else failed++;
       results.push({
         blogId: blog.id,
         domain: blog.domain,
         status: result.status,
         message: result.message,
       });
+      if (result.status === "published") {
+        published++;
+        // Update in-memory counters so subsequent blogs in this run see the
+        // correct caps.
+        publishedTodayByBlog.set(blog.id, todayCount + 1);
+        publishedByClient.set(blog.clientId, clientCount + 1);
+      } else {
+        failed++;
+      }
     } catch (error) {
       failed++;
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -292,10 +451,11 @@ export async function runAutoPublishCron(): Promise<{
   }
 
   return {
-    considered: activeBlogs.length,
-    due: dueBlogs.length,
+    considered: rows.length,
+    due: published + failed,
     published,
     failed,
+    skipped,
     results,
   };
 }

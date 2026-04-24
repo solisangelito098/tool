@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getBlog, getClientsForSelect } from "@/lib/actions/blog-actions";
+import { getBlog, getBlogPosts, getClientsForSelect } from "@/lib/actions/blog-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,7 @@ import {
 import { CredentialDisplay } from "@/components/blogs/credential-display";
 import { WpConnectionTest } from "@/components/blogs/wp-connection-test";
 import { BlogForm } from "@/components/blogs/blog-form";
+import { BlogPostsPanel } from "@/components/blogs/blog-posts-panel";
 import {
   ArrowLeft,
   Pencil,
@@ -120,7 +121,21 @@ export default async function BlogDetailPage({
     );
   }
 
-  // Detail view
+  // Detail view — also fetch posts in parallel with the rest of the page render.
+  const postsResult = await getBlogPosts(params.blogId).catch((err) => ({
+    generated: [],
+    live: {
+      available: false,
+      platform: blog.platform,
+      posts: [],
+      page: 1,
+      perPage: 20,
+      total: 0,
+      totalPages: 0,
+      error: err instanceof Error ? err.message : "Failed to load posts",
+    },
+  }));
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -296,6 +311,13 @@ export default async function BlogDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {/* Posts: auto-generated rows + live WordPress posts (with edit/delete) */}
+      <BlogPostsPanel
+        blogId={params.blogId}
+        generated={postsResult.generated}
+        live={postsResult.live}
+      />
     </div>
   );
 }

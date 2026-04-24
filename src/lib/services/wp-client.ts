@@ -227,6 +227,86 @@ export async function fetchRecentPosts(
 }
 
 /**
+ * Fetch posts with pagination + full content. Returns the page of posts plus
+ * the total counts from WordPress's response headers.
+ */
+export async function fetchPosts(
+  wpUrl: string,
+  username: string,
+  appPassword: string,
+  options: {
+    page?: number;
+    perPage?: number;
+    /** WP statuses to include. Authenticated requests default to publish only;
+     *  pass ["publish","draft","pending","private","future"] to see all. */
+    statuses?: string[];
+    search?: string;
+  } = {},
+): Promise<{ posts: WpPost[]; total: number; totalPages: number }> {
+  const { page = 1, perPage = 20, statuses, search } = options;
+  const client = createClient(wpUrl, username, appPassword);
+
+  const params: Record<string, string | number> = {
+    page,
+    per_page: perPage,
+    orderby: "date",
+    order: "desc",
+    context: "edit",
+    _fields:
+      "id,date,date_gmt,modified,slug,status,title,content,excerpt,link,featured_media,categories,tags",
+  };
+  if (statuses && statuses.length > 0) params.status = statuses.join(",");
+  if (search) params.search = search;
+
+  const res = await client.get<WpPost[]>("/wp-json/wp/v2/posts", {
+    params,
+    validateStatus: () => true,
+  });
+
+  // WP returns 400 if `page` is past the last page — return empty rather than
+  // throw, since "page 2 of an empty list" is a reasonable thing to ask.
+  if (res.status === 400) {
+    return { posts: [], total: 0, totalPages: 0 };
+  }
+  if (res.status >= 400) {
+    throw new Error(formatError({ response: res, isAxiosError: true } as never));
+  }
+
+  const total = parseInt((res.headers?.["x-wp-total"] as string | undefined) ?? "0", 10);
+  const totalPages = parseInt(
+    (res.headers?.["x-wp-totalpages"] as string | undefined) ?? "0",
+    10,
+  );
+
+  return { posts: res.data, total, totalPages };
+}
+
+/**
+ * Delete a WordPress post. By default sends to trash; pass force=true to skip
+ * trash and delete permanently.
+ */
+export async function deletePost(
+  wpUrl: string,
+  username: string,
+  appPassword: string,
+  postId: number,
+  force: boolean = false,
+): Promise<{ deleted: boolean; permanently: boolean }> {
+  const client = createClient(wpUrl, username, appPassword);
+  const res = await client.delete<{ deleted?: boolean; previous?: WpPost } | WpPost>(
+    `/wp-json/wp/v2/posts/${postId}`,
+    { params: force ? { force: true } : {} },
+  );
+  // Trash response: the post itself with status=trash. Force response:
+  // { deleted: true, previous: WpPost }.
+  if (force) {
+    const data = res.data as { deleted?: boolean };
+    return { deleted: Boolean(data.deleted), permanently: true };
+  }
+  return { deleted: true, permanently: false };
+}
+
+/**
  * Update an existing WordPress post.
  */
 export async function updatePost(
