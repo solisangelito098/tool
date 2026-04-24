@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { getBlog, getBlogPosts, getClientsForSelect } from "@/lib/actions/blog-actions";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +15,7 @@ import { CredentialDisplay } from "@/components/blogs/credential-display";
 import { WpConnectionTest } from "@/components/blogs/wp-connection-test";
 import { BlogForm } from "@/components/blogs/blog-form";
 import { BlogPostsPanel } from "@/components/blogs/blog-posts-panel";
+import { ShopifyInstallButton } from "@/components/blogs/shopify-install-button";
 import {
   ArrowLeft,
   Pencil,
@@ -23,13 +25,20 @@ import {
   Calendar,
   FileText,
   BarChart3,
+  AlertTriangle,
+  CheckCircle2,
+  ShoppingBag,
 } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface BlogDetailPageProps {
   params: { blogId: string };
-  searchParams: { edit?: string };
+  searchParams: {
+    edit?: string;
+    shopify_connected?: string;
+    shopify_error?: string;
+  };
 }
 
 const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -96,10 +105,15 @@ export default async function BlogDetailPage({
           defaultValues={{
             clientId: blog.clientId,
             domain: blog.domain,
+            platform: (blog.platform as "wordpress" | "shopify") || "wordpress",
             wpUrl: blog.wpUrl || "",
             wpUsername: blog.wpUsername || "",
             wpAppPassword: blog.wpAppPassword || "",
             seoPlugin: (blog.seoPlugin as "yoast" | "rankmath" | "none") || "none",
+            shopifyStoreUrl: blog.shopifyStoreUrl || "",
+            shopifyAdminApiToken: blog.shopifyAdminApiToken || "",
+            shopifyApiVersion: blog.shopifyApiVersion || "2024-07",
+            shopifyBlogId: blog.shopifyBlogId || "",
             hostingProvider: blog.hostingProvider || "",
             hostingLoginUrl: blog.hostingLoginUrl || "",
             hostingUsername: blog.hostingUsername || "",
@@ -136,8 +150,28 @@ export default async function BlogDetailPage({
     },
   }));
 
+  const isShopify = blog.platform === "shopify";
+
   return (
     <div className="space-y-6">
+      {/* Shopify OAuth callback feedback */}
+      {searchParams.shopify_connected === "1" && (
+        <Alert>
+          <CheckCircle2 className="size-4" />
+          <AlertTitle>Shopify connected</AlertTitle>
+          <AlertDescription>
+            The store is now linked. The Admin API token has been saved to this blog.
+          </AlertDescription>
+        </Alert>
+      )}
+      {searchParams.shopify_error && (
+        <Alert variant="destructive">
+          <AlertTriangle className="size-4" />
+          <AlertTitle>Shopify install failed</AlertTitle>
+          <AlertDescription>{searchParams.shopify_error}</AlertDescription>
+        </Alert>
+      )}
+
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-center gap-3">
@@ -151,6 +185,9 @@ export default async function BlogDetailPage({
               <h1 className="text-2xl font-bold tracking-tight">{blog.domain}</h1>
               <Badge variant={STATUS_VARIANTS[blog.status ?? "setup"] ?? "outline"}>
                 {blog.status ?? "setup"}
+              </Badge>
+              <Badge variant="outline" className="capitalize">
+                {blog.platform}
               </Badge>
             </div>
             <p className="text-muted-foreground">
@@ -180,25 +217,61 @@ export default async function BlogDetailPage({
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <InfoRow label="Domain" value={blog.domain} />
-            <InfoRow label="WordPress URL" value={blog.wpUrl} />
-            <InfoRow label="SEO Plugin" value={blog.seoPlugin} />
+            <InfoRow label="Platform" value={blog.platform} />
+            {isShopify ? (
+              <>
+                <InfoRow label="Shopify Store URL" value={blog.shopifyStoreUrl} />
+                <InfoRow label="API Version" value={blog.shopifyApiVersion} />
+              </>
+            ) : (
+              <>
+                <InfoRow label="WordPress URL" value={blog.wpUrl} />
+                <InfoRow label="SEO Plugin" value={blog.seoPlugin} />
+              </>
+            )}
             <InfoRow label="Status" value={blog.status} />
           </CardContent>
         </Card>
 
-        {/* WordPress Credentials */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShieldCheck className="size-4" />
-              WordPress Credentials
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <CredentialDisplay label="Username" value={blog.wpUsername} />
-            <CredentialDisplay label="Application Password" value={blog.wpAppPassword} />
-          </CardContent>
-        </Card>
+        {/* Credentials (platform-aware) */}
+        {isShopify ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShoppingBag className="size-4" />
+                Shopify Credentials
+              </CardTitle>
+              <CardDescription>
+                Connect via OAuth (recommended) or paste a custom-app token in the Edit form.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <InfoRow label="Store URL" value={blog.shopifyStoreUrl} />
+              <CredentialDisplay
+                label="Admin API Token"
+                value={blog.shopifyAdminApiToken}
+              />
+              <InfoRow label="Blog ID" value={blog.shopifyBlogId} />
+              <ShopifyInstallButton
+                blogId={params.blogId}
+                initialShop={blog.shopifyStoreUrl}
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="size-4" />
+                WordPress Credentials
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <CredentialDisplay label="Username" value={blog.wpUsername} />
+              <CredentialDisplay label="Application Password" value={blog.wpAppPassword} />
+            </CardContent>
+          </Card>
+        )}
 
         {/* Hosting */}
         <Card>
